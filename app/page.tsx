@@ -1,69 +1,60 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { isSheetsConfigured, loadWeeks, saveWeek } from "@/app/lib/sheets";
+
+type DayKey = "monday" | "tuesday" | "wednesday" | "thursday";
+type WeeklyRecord = {
+  weekStart: string;
+  monday: { completed: boolean; applications: number; note: string };
+  tuesday: { helloInterview: boolean; systemDesignMinutes: number; codingMinutes: number; note: string };
+  wednesday: { completed: boolean; aiMinutes: number; note: string };
+  thursday: { completed: boolean; networkingTouches: number; networkingMinutes: number; practiceMinutes: number; practiceSessions: number; practiceType: string; note: string };
+};
+type StoredWeeks = Record<string, WeeklyRecord>;
+
+const STORAGE_KEY = "career-routine-weeks";
+const direction = "Senior Product / Full-Stack Engineer with strong AI product engineering skills";
+
+function getMonday(date: Date) { const copy = new Date(date); const day = copy.getDay(); copy.setDate(copy.getDate() + (day === 0 ? -6 : 1 - day)); copy.setHours(0, 0, 0, 0); return copy; }
+function toKey(date: Date) { const year = date.getFullYear(); const month = String(date.getMonth() + 1).padStart(2, "0"); const day = String(date.getDate()).padStart(2, "0"); return `${year}-${month}-${day}`; }
+function fromKey(key: string) { const [year, month, day] = key.split("-").map(Number); return new Date(year, month - 1, day); }
+function formatRange(key: string) { const start = fromKey(key); const end = new Date(start); end.setDate(start.getDate() + 6); const options: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" }; return `${start.toLocaleDateString("en-US", options)} – ${end.toLocaleDateString("en-US", { ...options, year: "numeric" })}`; }
+function blankWeek(weekStart: string): WeeklyRecord { return { weekStart, monday: { completed: false, applications: 0, note: "" }, tuesday: { helloInterview: false, systemDesignMinutes: 0, codingMinutes: 0, note: "" }, wednesday: { completed: false, aiMinutes: 0, note: "" }, thursday: { completed: false, networkingTouches: 0, networkingMinutes: 0, practiceMinutes: 0, practiceSessions: 0, practiceType: "Coding", note: "" } }; }
+function sumStats(week: WeeklyRecord) { return { applications: week.monday.applications, networking: week.thursday.networkingTouches, systemDesign: week.tuesday.systemDesignMinutes, ai: week.wednesday.aiMinutes, sessions: week.thursday.practiceSessions, totalMinutes: week.tuesday.systemDesignMinutes + week.tuesday.codingMinutes + week.wednesday.aiMinutes + week.thursday.networkingMinutes + week.thursday.practiceMinutes }; }
+function normalizeWeeks(weeks: Record<string, WeeklyRecord>): StoredWeeks { return Object.values(weeks).reduce<StoredWeeks>((normalized, week) => { normalized[week.weekStart] = week; return normalized; }, {}); }
+function Icon({ children }: { children: React.ReactNode }) { return <span className="icon" aria-hidden="true">{children}</span>; }
+
+function WeekHeader({ weekKey, onChange }: { weekKey: string; onChange: (offset: number) => void }) { const isCurrent = weekKey === toKey(getMonday(new Date())); return <div className="week-header"><div><p className="eyebrow">{isCurrent ? "This week" : "Past week"}</p><h1>{formatRange(weekKey)}</h1></div><div className="week-controls"><button className="quiet-button" onClick={() => onChange(-1)} aria-label="Previous week">← <span>Previous</span></button>{!isCurrent && <button className="quiet-button" onClick={() => onChange(0)}>Back to this week</button>}<button className="quiet-button" onClick={() => onChange(1)} aria-label="Next week"><span>Next</span> →</button></div></div>; }
+function Field({ label, value, onChange, suffix }: { label: string; value: number; onChange: (value: number) => void; suffix?: string }) { return <label className="number-field"><span>{label}</span><span className="number-input"><input type="number" min="0" value={value || ""} onChange={(event) => onChange(Number(event.target.value) || 0)} /><small>{suffix}</small></span></label>; }
+function NoteField({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) { return <label className="note-field"><span>Notes</span><textarea value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} rows={2} /></label>; }
+function FocusCard({ day, title, subtitle, icon, tone, complete, children }: { day: string; title: string; subtitle: string; icon: string; tone: string; complete: boolean; children: React.ReactNode }) { return <article className={`focus-card ${tone}`}><div className="card-top"><div className="day-mark"><span className="day-icon"><Icon>{icon}</Icon></span><span>{day}</span></div>{complete && <span className="complete-pill">Complete</span>}</div><h2>{title}</h2><p className="card-subtitle">{subtitle}</p><div className="card-content">{children}</div></article>; }
+function ProgressOverview({ stats }: { stats: ReturnType<typeof sumStats> }) { const items = [["Applications", stats.applications, "submitted", "✦"], ["Networking", stats.networking, "touches", "↗"], ["System design", stats.systemDesign, "minutes", "◷"], ["AI / product", stats.ai, "minutes", "✧"], ["Practice", stats.sessions, "sessions", "◇"]]; return <section className="section-block"><div className="section-heading"><div><p className="eyebrow">Progress</p><h2>A little adds up</h2></div><span className="focused-total">{Math.floor(stats.totalMinutes / 60)}h {stats.totalMinutes % 60}m focused</span></div><div className="stat-grid">{items.map(([label, value, unit, icon]) => <div className="stat" key={label as string}><span className="stat-icon">{icon}</span><strong>{value as number}</strong><span>{label as string}<small>{unit as string}</small></span></div>)}</div></section>; }
+function MinimumWeek({ stats, week }: { stats: ReturnType<typeof sumStats>; week: WeeklyRecord }) { const checks = [["Apply to 2 jobs", stats.applications >= 2], ["1 hour Hello Interview", week.tuesday.systemDesignMinutes >= 60], ["1 hour AI building / learning", stats.ai >= 60], ["Message 1 person", stats.networking >= 1]]; return <section className="minimum-card"><div><p className="eyebrow">A gentle baseline</p><h2>Good enough week</h2><p>Small progress counts. This is the minimum to keep your rhythm.</p></div><div className="minimum-list">{checks.map(([label, checked]) => <div className={`minimum-item ${checked ? "checked" : ""}`} key={label as string}><span className="check-circle">{checked ? "✓" : ""}</span>{label as string}</div>)}</div></section>; }
+function MonthlyView({ weeks, currentKey }: { weeks: StoredWeeks; currentKey: string }) { const current = fromKey(currentKey); const month = current.getMonth(); const year = current.getFullYear(); const monthStats = Object.values(weeks).filter((week) => { const date = fromKey(week.weekStart); return date.getMonth() === month && date.getFullYear() === year; }).reduce((total, week) => { const stats = sumStats(week); return { applications: total.applications + stats.applications, networking: total.networking + stats.networking, system: total.system + stats.systemDesign, ai: total.ai + stats.ai, practice: total.practice + stats.sessions }; }, { applications: 0, networking: 0, system: 0, ai: 0, practice: 0 }); const monthName = current.toLocaleDateString("en-US", { month: "long" }); return <section className="section-block monthly"><div className="section-heading"><div><p className="eyebrow">Monthly view</p><h2>{monthName} at a glance</h2></div><span className="muted-label">Stored on this device</span></div><div className="monthly-grid"><div><strong>{monthStats.applications}</strong><span>applications</span></div><div><strong>{monthStats.networking}</strong><span>networking touches</span></div><div><strong>{(monthStats.system / 60).toFixed(1)}</strong><span>system design hours</span></div><div><strong>{(monthStats.ai / 60).toFixed(1)}</strong><span>AI / product hours</span></div><div><strong>{monthStats.practice}</strong><span>practice sessions</span></div></div></section>; }
+function AccountBar() { return <div className={`account-bar ${isSheetsConfigured ? "" : "setup-bar"}`}>{isSheetsConfigured ? "Google Sheets endpoint configured" : "Google Sheets is not configured yet — using this browser for now."}</div>; }
 
 export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+  const currentWeek = toKey(getMonday(new Date())); const [weekKey, setWeekKey] = useState(currentWeek); const [weeks, setWeeks] = useState<StoredWeeks>({}); const [ready, setReady] = useState(false); const [syncError, setSyncError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (isSheetsConfigured) { try { const remoteWeeks = await loadWeeks<WeeklyRecord>(); if (!cancelled) setWeeks(normalizeWeeks(remoteWeeks)); } catch (error) { if (!cancelled) setSyncError(error instanceof Error ? error.message : "Could not load Google Sheets data."); } setReady(true); return; }
+      let savedWeeks: StoredWeeks | undefined;
+      try { const saved = window.localStorage.getItem(STORAGE_KEY); if (saved) savedWeeks = JSON.parse(saved) as StoredWeeks; } catch { /* Start clean if storage is unavailable. */ }
+      if (!cancelled) { if (savedWeeks) setWeeks(savedWeeks); setReady(true); }
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, []);
+  const week = weeks[weekKey] ?? blankWeek(weekKey); const stats = useMemo(() => sumStats(week), [week]);
+  function updateWeek(next: WeeklyRecord) { const nextWeeks = { ...weeks, [weekKey]: next }; setWeeks(nextWeeks); if (isSheetsConfigured) { void saveWeek(weekKey, next).catch((error: unknown) => setSyncError(error instanceof Error ? error.message : "Could not save to Google Sheets.")); } else if (ready) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextWeeks)); }
+  function updateDay<K extends DayKey>(day: K, changes: Partial<WeeklyRecord[K]>) { updateWeek({ ...week, [day]: { ...week[day], ...changes } }); }
+  function shiftWeek(offset: number) { if (offset === 0) setWeekKey(currentWeek); else { const next = fromKey(weekKey); next.setDate(next.getDate() + offset * 7); setWeekKey(toKey(next)); } }
+  return <main className="app-shell"><header className="site-header"><div className="brand"><span className="brand-mark">↗</span><span>hire me</span></div><span className="save-status">{ready ? (syncError ? "Sync needs attention" : isSheetsConfigured ? "Synced" : "Saved locally") : "Loading your rhythm…"}</span></header><div className="content-wrap"><AccountBar />{syncError && <p className="sync-error">{syncError}</p>}<WeekHeader weekKey={weekKey} onChange={shiftWeek} /><div className="intro"><div><p className="eyebrow">A steady practice for a long-term search</p><h2>Make space for the work that matters.</h2></div><p>One or two focused hours, Monday through Thursday. Continue where you are.</p></div><section className="focus-grid">
+    <FocusCard day="Monday" title="Applications" subtitle="2–4 strong applications" icon="✦" tone="sand" complete={week.monday.completed}><label className="task-check"><input type="checkbox" checked={week.monday.completed} onChange={(event) => updateDay("monday", { completed: event.target.checked })} /><span className="custom-check">✓</span>Application session complete</label><Field label="Applications submitted" value={week.monday.applications} onChange={(value) => updateDay("monday", { applications: value })} /><NoteField value={week.monday.note} onChange={(value) => updateDay("monday", { note: value })} placeholder="Companies, roles, or a useful note…" /></FocusCard>
+    <FocusCard day="Tuesday" title="Interview skills" subtitle="Hello Interview + optional coding" icon="◷" tone="blue" complete={week.tuesday.helloInterview}><label className="task-check"><input type="checkbox" checked={week.tuesday.helloInterview} onChange={(event) => updateDay("tuesday", { helloInterview: event.target.checked })} /><span className="custom-check">✓</span>Hello Interview session complete</label><div className="field-row"><Field label="System design" value={week.tuesday.systemDesignMinutes} onChange={(value) => updateDay("tuesday", { systemDesignMinutes: value })} suffix="min" /><Field label="Coding practice" value={week.tuesday.codingMinutes} onChange={(value) => updateDay("tuesday", { codingMinutes: value })} suffix="min" /></div><NoteField value={week.tuesday.note} onChange={(value) => updateDay("tuesday", { note: value })} placeholder="What clicked today?" /></FocusCard>
+    <FocusCard day="Wednesday" title="AI / product engineering" subtitle="Learn or build something practical" icon="✧" tone="lavender" complete={week.wednesday.completed}><label className="task-check"><input type="checkbox" checked={week.wednesday.completed} onChange={(event) => updateDay("wednesday", { completed: event.target.checked })} /><span className="custom-check">✓</span>Learning / building session complete</label><Field label="Focused learning" value={week.wednesday.aiMinutes} onChange={(value) => updateDay("wednesday", { aiMinutes: value })} suffix="min" /><p className="topic-hint">LLM APIs · RAG · evaluations · agents · reliability</p><NoteField value={week.wednesday.note} onChange={(value) => updateDay("wednesday", { note: value })} placeholder="What are you exploring or building?" /></FocusCard>
+    <FocusCard day="Thursday" title="Networking + practice" subtitle="Stay connected, keep skills warm" icon="↗" tone="mint" complete={week.thursday.completed}><label className="task-check"><input type="checkbox" checked={week.thursday.completed} onChange={(event) => updateDay("thursday", { completed: event.target.checked })} /><span className="custom-check">✓</span>Thursday session complete</label><div className="field-row"><Field label="People reached" value={week.thursday.networkingTouches} onChange={(value) => updateDay("thursday", { networkingTouches: value })} /><Field label="Practice sessions" value={week.thursday.practiceSessions} onChange={(value) => updateDay("thursday", { practiceSessions: value })} /></div><div className="field-row"><Field label="Networking time" value={week.thursday.networkingMinutes} onChange={(value) => updateDay("thursday", { networkingMinutes: value })} suffix="min" /><Field label="Practice time" value={week.thursday.practiceMinutes} onChange={(value) => updateDay("thursday", { practiceMinutes: value })} suffix="min" /></div><select className="practice-select" value={week.thursday.practiceType} onChange={(event) => updateDay("thursday", { practiceType: event.target.value })}><option>Coding</option><option>Behavioral</option><option>Frontend</option><option>System design</option></select><NoteField value={week.thursday.note} onChange={(value) => updateDay("thursday", { note: value })} placeholder="A person to follow up with, or a practice note…" /></FocusCard>
+  </section><ProgressOverview stats={stats} /><MinimumWeek stats={stats} week={week} /><MonthlyView weeks={weeks} currentKey={weekKey} /><section className="direction-card"><div><p className="eyebrow">Long-Term Direction</p><h2>{direction}</h2></div><div className="direction-note"><span>Keep this close</span><p>“Product engineering is the base. AI is the specialization.”</p></div></section><footer>Built for a calm, durable search <span>·</span> Your data stays in this browser</footer></div></main>;
 }
