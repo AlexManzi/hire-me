@@ -67,6 +67,13 @@ jobs:
             ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json', '**/yarn.lock') }}-
       - name: Install dependencies
         run: ${{ steps.detect-package-manager.outputs.manager }} ${{ steps.detect-package-manager.outputs.command }}
+      - name: Verify Google Sheets configuration
+        run: |
+          test -n "$NEXT_PUBLIC_GOOGLE_SHEETS_ENDPOINT"
+          test -n "$NEXT_PUBLIC_GOOGLE_SHEETS_KEY"
+        env:
+          NEXT_PUBLIC_GOOGLE_SHEETS_ENDPOINT: ${{ secrets.GOOGLE_SHEETS_ENDPOINT }}
+          NEXT_PUBLIC_GOOGLE_SHEETS_KEY: ${{ secrets.GOOGLE_SHEETS_KEY }}
       - name: Build with Next.js
         run: ${{ steps.detect-package-manager.outputs.runner }} next build
         env:
